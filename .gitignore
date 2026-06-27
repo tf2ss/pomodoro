@@ -1,0 +1,20 @@
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDE / editor
+.vscode/
+.idea/
+
+# Focus app data (contains personal study records)
+focus_history.json
+focus_settings.json
+
+# OS files
+Thumbs.db
+.DS_Store
