@@ -5,6 +5,7 @@ Focus — 学习专注计时器
 """
 
 import tkinter as tk
+from tkinter import messagebox
 import winsound
 import json
 import os
@@ -179,7 +180,7 @@ class FocusApp:
         gear.bind("<Leave>", lambda e: gear.config(fg=T["dim"]))
 
     def _build_wheel(self, parent, tag, count, default_idx, suffix):
-        """滚轮选择器 — 修复选中残留 + 显示完整"""
+        """滚轮选择器 — 单步滚动 + 选中居中 + 上下限"""
         frame = tk.Frame(parent, bg=T["bg"])
         frame.pack(side="left", padx=10)
 
@@ -188,6 +189,8 @@ class FocusApp:
 
         wheel_h = 160
         wheel_w = 56
+        VISIBLE = 5
+
         container = tk.Frame(frame, bg=T["surface"],
                              width=wheel_w, height=wheel_h)
         container.pack(pady=(4, 0))
@@ -195,7 +198,7 @@ class FocusApp:
 
         lb = tk.Listbox(
             container,
-            height=5, width=3, font=F["wheel"],
+            height=VISIBLE, width=3, font=F["wheel"],
             bg=T["surface"], fg=T["dim"],
             selectbackground=T["surface"], selectforeground=T["accent"],
             relief="flat", highlightthickness=0,
@@ -205,16 +208,15 @@ class FocusApp:
             lb.insert("end", f"{i:02d}")
         lb.place(x=0, y=0, relwidth=1, relheight=1)
 
-        # 初始选中
+        # 初始选中 — 居中
         lb.selection_clear(0, "end")
         lb.selection_set(default_idx)
-        lb.see(default_idx)
         lb.itemconfig(default_idx, fg=T["accent"])
+        self._center_wheel_item(lb, default_idx, count, VISIBLE)
 
         var = tk.StringVar(value=f"{default_idx:02d}")
         setattr(self, f"_{tag}_var", var)
 
-        # ── 修复：统一管理所有 item 颜色，避免残留 ──
         def reset_all_items():
             for i in range(count):
                 lb.itemconfig(i, fg=T["dim"])
@@ -224,46 +226,27 @@ class FocusApp:
             if sel:
                 idx = sel[0]
                 v.set(f"{idx:02d}")
-                # 先清除所有项的选中颜色
                 reset_all_items()
-                # 只高亮当前
                 lst.itemconfig(idx, fg=T["accent"])
 
         lb.bind("<<ListboxSelect>>", on_select)
 
-        def on_mousewheel(e, lst=lb):
+        def on_mousewheel(e, lst=lb, cnt=count, vis=VISIBLE):
+            """滚轮仅滚动视图，不改变选中；用户点击才选中"""
             delta = -1 if e.delta > 0 else 1
-            cur = lst.curselection()
-            new_idx = (cur[0] + delta) % count if cur else default_idx
-            lst.selection_clear(0, "end")
-            lst.selection_set(new_idx)
-            lst.see(new_idx)
-            lst.event_generate("<<ListboxSelect>>")
+            denom = cnt - vis
+            if denom <= 0:
+                return "break"
+            # 精确追踪顶部项，每次只滚 1 行
+            top_frac = lst.yview()[0]
+            current_top = int(top_frac * denom + 0.5)
+            new_top = max(0, min(denom, current_top + delta))
+            lst.yview_moveto(new_top / denom)
+            return "break"
 
-        lb.bind("<MouseWheel>", on_mousewheel)
-
-        # 上下遮罩（半透明渐变 → 用纯色矩形模拟）
-        shade_h = 26
-        for y_pos in [0, wheel_h - shade_h]:
-            shade = tk.Canvas(container, width=wheel_w, height=shade_h,
-                              bg=T["surface"], highlightthickness=0, bd=0, highlightbackground=T["surface"])
-            shade.place(x=0, y=y_pos)
-            # 简洁渐变：4 条递减透明度的横条
-            steps = 4
-            for s in range(steps):
-                sy = s * (shade_h // steps)
-                sh = shade_h // steps
-                shade.create_rectangle(
-                    0, sy, wheel_w, sy + sh,
-                    fill=T["surface"], outline="", stipple="gray50"
-                )
-
-        # 选中行高亮指示线（中间两条细横线）
-        indicator = tk.Canvas(container, width=wheel_w - 8, height=4,
-                              bg=T["surface"], highlightthickness=0, bd=0, highlightbackground=T["surface"])
-        indicator.place(x=4, y=wheel_h // 2 - 2)
-        indicator.create_line(0, 1, wheel_w - 8, 1, fill=T["accent"], width=1)
-        indicator.create_line(0, 3, wheel_w - 8, 3, fill=T["accent"], width=1)
+        # 滚轮绑定到 listbox、容器（任何位置都能滚）
+        for w in [lb, container, frame]:
+            w.bind("<MouseWheel>", on_mousewheel)
 
         setattr(self, f"_{tag}_list", lb)
 
@@ -279,7 +262,11 @@ class FocusApp:
     def _begin_session(self):
         h = int(self._hour_var.get() or "0")
         m = int(self._minute_var.get() or "25")
-        total = max(1, min(h * 3600 + m * 60, 24 * 3600))
+        total = h * 3600 + m * 60
+        if total == 0:
+            messagebox.showwarning("无法计时", "时长不能为 00:00，请重新选择。")
+            return
+        total = max(1, min(total, 24 * 3600))
 
         self.total_seconds = total
         self.remaining = total
@@ -675,6 +662,14 @@ class FocusApp:
     # ═══════════════════════════════════════
     #  共享
     # ═══════════════════════════════════════
+
+    @staticmethod
+    def _center_wheel_item(lb, idx, count, visible):
+        """将选中项垂直居中于可见区域（对准横线指示器）"""
+        half = visible // 2
+        top = max(0, min(count - visible, idx - half))
+        denom = count - visible
+        lb.yview_moveto(top / denom if denom > 0 else 0)
 
     def _rounded_btn(self, parent, text, bg, fg, cmd, w, h):
         r = 12
